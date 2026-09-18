@@ -139,7 +139,7 @@
       </div>
       <div id="price"></div>
       <div id="rsi"></div>
-      <div class="legend">เส้นประ = divergence ที่ยืนยันแล้ว · เส้นจุดสีเหลือง = ลูกที่กำลังเกิด (ราคาทำจุดใหม่แล้วแต่ยังไม่ครบแท่งขวาที่ยืนยัน pivot)</div>
+      <div class="legend">เส้นประ = divergence ที่ยืนยันแล้ว (ราคาเทียบที่จุด pivot, RSI เทียบที่ยอด/ก้น RSI ในช่วงรอบ pivot) · เส้นจุดสีเหลือง = ลูกที่กำลังเกิด</div>
     </div>
   </main>
 </div>
@@ -258,15 +258,31 @@ function pivots(arr, L, R, isLow) {
 }
 
 // นับ divergence ต่อเนื่องย้อนจาก pivot ล่าสุด
-function chainDiv(piv, price, r, bullish) {
+// RSI ที่ "ยอด/ก้น" จริงรอบ pivot ราคา: ยอด RSI มักเกิดคนละแท่งกับยอดราคา 1-2 แท่ง
+// จึงหาค่า RSI สูงสุด (bear) / ต่ำสุด (bull) ในช่วง ±w แท่งรอบ pivot แล้วใช้ค่านั้นเทียบและลากเส้น
+const MIN_RSI_DIFF = 1.0; // RSI ต่างกันน้อยกว่านี้ไม่นับเป็น divergence (กันสัญญาณปลอมจากค่าเกือบเท่ากัน)
+function rsiExtreme(r, i, w, bullish, hi) {
+  const lo = Math.max(0, i - w), up = Math.min(hi, i + w);
+  let best = -1;
+  for (let j = lo; j <= up; j++) {
+    if (r[j] == null) continue;
+    if (best < 0 || (bullish ? r[j] < r[best] : r[j] > r[best])) best = j;
+  }
+  return best;
+}
+function isDiv(price, r, a, b, ra, rb, bullish) {
+  if (ra < 0 || rb < 0) return false;
+  const priceDiv = bullish ? price[b] < price[a] : price[b] > price[a];
+  const rsiDiv = bullish ? r[rb] - r[ra] >= MIN_RSI_DIFF : r[ra] - r[rb] >= MIN_RSI_DIFF;
+  return priceDiv && rsiDiv;
+}
+
+// นับ divergence ต่อเนื่องย้อนจาก pivot ล่าสุด (rIdx = แท่งที่ RSI ทำยอด/ก้นของแต่ละ pivot)
+function chainDiv(piv, rIdx, price, r, bullish) {
   if (piv.length < 2) return { count: 0, chain: [] };
-  let count = 0; const chain = [piv[piv.length - 1]];
+  let count = 0; const chain = [piv.length - 1];
   for (let k = piv.length - 1; k > 0; k--) {
-    const a = piv[k - 1], b = piv[k];
-    if (r[a] == null || r[b] == null) break;
-    const priceDiv = bullish ? price[b] < price[a] : price[b] > price[a];
-    const rsiDiv = bullish ? r[b] > r[a] : r[b] < r[a];
-    if (priceDiv && rsiDiv) { count++; chain.unshift(a); } else break;
+    if (isDiv(price, r, piv[k - 1], piv[k], rIdx[k - 1], rIdx[k], bullish)) { count++; chain.unshift(k - 1); } else break;
   }
   return { count, chain };
 }
@@ -280,30 +296,32 @@ function analyze(kl, c) {
     const price = bullish ? lows : highs;
     const piv = pivots(price, c.pivL, c.pivR, bullish);
     if (!piv.length) continue;
-    const { count, chain } = chainDiv(piv, price, r, bullish);
-    const last = piv[piv.length - 1];
+    const w = c.pivR;
+    const rIdx = piv.map(i => rsiExtreme(r, i, w, bullish, n - 1));
+    const { count, chain } = chainDiv(piv, rIdx, price, r, bullish);
+    const last = piv[piv.length - 1], lastR = rIdx[rIdx.length - 1];
 
     // ลูกที่กำลังเกิด: หลัง pivot ล่าสุด ราคาทำจุดต่ำ/สูงใหม่ (ยังไม่ครบแท่งขวาให้ยืนยัน) แต่ RSI ไม่ทำตาม
-    let forming = -1;
+    let forming = -1, formingR = -1;
     if (c.forming) {
       let cand = -1;
       for (let i = last + 1; i < n; i++) if (cand < 0 || (bullish ? price[i] < price[cand] : price[i] > price[cand])) cand = i;
-      if (cand >= 0 && n - 1 - cand <= c.pivR && r[cand] != null && r[last] != null) {
-        const priceDiv = bullish ? price[cand] < price[last] : price[cand] > price[last];
-        const rsiDiv = bullish ? r[cand] > r[last] : r[cand] < r[last];
-        if (priceDiv && rsiDiv) forming = cand;
+      if (cand >= 0 && n - 1 - cand <= c.pivR) {
+        const candR = rsiExtreme(r, cand, w, bullish, n - 1);
+        if (isDiv(price, r, last, cand, lastR, candR, bullish)) { forming = cand; formingR = candR; }
       }
     }
     const total = count + (forming >= 0 ? 1 : 0);
     if (total < c.minDiv) continue;
-    const lastIdx = forming >= 0 ? forming : chain[chain.length - 1];
+    const lastIdx = forming >= 0 ? forming : piv[chain[chain.length - 1]];
     const age = n - 1 - lastIdx;
     if (age > c.maxAge) continue;
-    const idxs = chain.slice(); if (forming >= 0) idxs.push(forming);
+    const pts = chain.map(k => ({ i: piv[k], ri: rIdx[k] }));
+    if (forming >= 0) pts.push({ i: forming, ri: formingR });
     out.push({
       dir: bullish ? 'bull' : 'bear', count: total, confirmed: count, forming: forming >= 0, age,
       lastPivotTime: kl[last].time,
-      points: idxs.map(i => ({ i, time: kl[i].time, price: price[i], rsi: r[i] })),
+      points: pts.map(({ i, ri }) => ({ i, time: kl[i].time, price: price[i], rsi: r[ri], rsiTime: kl[ri].time })),
       rsiNow: r[n - 1], price: closes[n - 1],
     });
   }
@@ -494,7 +512,7 @@ function showChart(symbol, tf) {
       const lp = chartPrice.addLineSeries({ color: col, lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
       lp.setData(conf.map(p => ({ time: p.time, value: p.price })));
       const lr = chartRsi.addLineSeries({ color: col, lineWidth: 2, lineStyle: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-      lr.setData(conf.map(p => ({ time: p.time, value: p.rsi })));
+      lr.setData(conf.map(p => ({ time: p.rsiTime, value: p.rsi })));
       seriesList.push([chartPrice, lp], [chartRsi, lr]);
     }
     if (s.forming) {
@@ -502,7 +520,7 @@ function showChart(symbol, tf) {
       const fp = chartPrice.addLineSeries({ color: '#f5b942', lineWidth: 2, lineStyle: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
       fp.setData(seg.map(p => ({ time: p.time, value: p.price })));
       const fr = chartRsi.addLineSeries({ color: '#f5b942', lineWidth: 2, lineStyle: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-      fr.setData(seg.map(p => ({ time: p.time, value: p.rsi })));
+      fr.setData(seg.map(p => ({ time: p.rsiTime, value: p.rsi })));
       seriesList.push([chartPrice, fp], [chartRsi, fr]);
     }
     s.points.forEach((p, i) => {
