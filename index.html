@@ -500,7 +500,8 @@ function showChart(symbol, tf) {
   seriesList.push([chartPrice, candle]);
 
   const rsiS = chartRsi.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: true, autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
-  rsiS.setData(data.kl.map((k, i) => ({ time: k.time, value: data.r[i] })).filter(x => x.value != null));
+  // แท่งแรก ๆ ที่ยังไม่มีค่า RSI ใส่เป็นแท่งว่าง (whitespace) เพื่อให้ลำดับแท่งตรงกับกราฟราคา ไม่งั้นแกนเวลาจะเลื่อนกัน
+  rsiS.setData(data.kl.map((k, i) => data.r[i] == null ? { time: k.time } : { time: k.time, value: data.r[i] }));
   for (const [lv, col] of [[70, '#f0506e'], [30, '#26c281'], [50, '#3a4460']]) rsiS.createPriceLine({ price: lv, color: col, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
   seriesList.push([chartRsi, rsiS]);
 
