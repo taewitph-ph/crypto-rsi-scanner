@@ -1,7 +1,7 @@
 // Service worker: cache app shell so the app opens offline / installs as PWA.
 // Network-first for the page itself so new versions show up right away.
 // Binance API calls are never cached.
-const CACHE = 'rsi-scanner-v3';
+const CACHE = 'rsi-scanner-v4';
 const SHELL = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

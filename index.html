@@ -73,6 +73,22 @@
   #price { height: 340px; } #rsi { height: 160px; margin-top: 4px; }
   .legend { font-size: 12px; color: var(--muted); }
   a.tv { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .btn-trade { background: rgba(79,140,255,.15); color: var(--accent); border: 1px solid rgba(79,140,255,.4); padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+  .btn-trade:hover { background: var(--accent); color: #fff; }
+  .btn-danger { background: rgba(240,80,110,.15); color: var(--bear); border: 1px solid rgba(240,80,110,.4); padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+  #portPanel { margin-top: 18px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  #portPanel h2 { margin: 0 0 10px; font-size: 16px; }
+  #portPanel h3 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .port-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .port-head input { width: 110px; background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; }
+  .tbl-wrap { overflow-x: auto; }
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 12px; padding: 18px; width: min(420px, 92vw); }
+  dialog::backdrop { background: rgba(0,0,0,.6); }
+  dialog h2 { margin: 0 0 12px; font-size: 16px; }
+  dialog .field input, dialog .field select { width: 100%; }
+  dialog .calc { background: var(--panel2); border-radius: 8px; padding: 10px; font-size: 13px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 10px 0; }
+  dialog .calc b { font-family: var(--mono); }
+  dialog .actions { display: flex; gap: 8px; justify-content: flex-end; }
   @media (max-width: 860px) {
     .layout { grid-template-columns: 1fr; }
     aside { border-right: 0; border-bottom: 1px solid var(--border); }
@@ -110,6 +126,10 @@
       <div class="field"><label>จุดล่าสุดห่างไม่เกิน (แท่ง)</label><input id="maxAge" type="number" value="12" min="1"></div>
       <div class="field"><label>สแกน Top N ตาม volume</label><input id="topN" type="number" value="300" min="10"></div>
     </div>
+    <div class="row2">
+      <div class="field"><label>RR ขั้นต่ำ (ถึง TP1, 0 = ไม่กรอง)</label><input id="minRR" type="number" value="0" min="0" step="0.1"></div>
+      <div class="field"><label>เสี่ยงต่อไม้ (% พอร์ต)</label><input id="riskPct" type="number" value="1" min="0.1" step="0.1"></div>
+    </div>
     <div class="field">
       <label>สแกนซ้ำอัตโนมัติทุก (นาที, 0 = ปิด)</label>
       <input id="autoMin" type="number" value="15" min="0">
@@ -128,6 +148,7 @@
       <div class="stat bear"><div class="k">Bearish div</div><div class="v" id="sBear">0</div></div>
       <div class="stat"><div class="k">สแกนล่าสุด</div><div class="v" id="sTime" style="font-size:14px">-</div></div>
       <div class="stat"><div class="k">สแกนครั้งถัดไป</div><div class="v" id="sNext" style="font-size:14px">-</div></div>
+      <div class="stat" style="cursor:pointer" onclick="document.getElementById('portPanel').scrollIntoView({behavior:'smooth'})"><div class="k">พอร์ตจำลอง</div><div class="v" id="sPort" style="font-size:16px">10,000</div></div>
     </div>
     <div id="results"><div class="empty">ตั้งค่าแล้วกด "เริ่มสแกน"</div></div>
     <div id="chartPanel">
@@ -139,10 +160,47 @@
       </div>
       <div id="price"></div>
       <div id="rsi"></div>
-      <div class="legend">เส้นประ = divergence ที่ยืนยันแล้ว (ราคาเทียบที่จุด pivot, RSI เทียบที่ยอด/ก้น RSI ในช่วงรอบ pivot) · เส้นจุดสีเหลือง = ลูกที่กำลังเกิด</div>
+      <div class="legend">เส้นประ = divergence ที่ยืนยันแล้ว (ราคาเทียบที่จุด pivot, RSI เทียบที่ยอด/ก้น RSI ในช่วงรอบ pivot) · เส้นจุดสีเหลือง = ลูกที่กำลังเกิด · เส้นแนวนอน: น้ำเงิน = จุดเข้า, แดง = SL, เขียว = TP1, เขียวประ = TP2 (2R)</div>
+    </div>
+    <div id="portPanel">
+      <div class="port-head">
+        <h2 style="margin:0">พอร์ตจำลอง (paper trade)</h2>
+        <span class="legend">เช็ค TP/SL จากแท่งราคา 1 ชั่วโมงทุกครั้งที่สแกน · แท่งเดียวแตะทั้ง TP และ SL นับเป็น SL</span>
+        <span style="margin-left:auto"></span>
+        <input id="resetAmt" type="number" value="10000" min="100" step="100" title="เงินเริ่มต้น">
+        <button class="btn-ghost" onclick="resetPort()">รีเซ็ตพอร์ต</button>
+        <button class="btn-ghost" onclick="checkTrades()">เช็คราคาตอนนี้</button>
+      </div>
+      <div class="stats" id="portStats" style="margin-top:12px"></div>
+      <h3>ไม้ที่เปิดอยู่</h3>
+      <div class="tbl-wrap" id="openTrades"></div>
+      <h3>ประวัติ (ล่าสุด 30 ไม้)</h3>
+      <div class="tbl-wrap" id="closedTrades"></div>
     </div>
   </main>
 </div>
+
+<dialog id="tradeDlg">
+  <h2 id="dlgTitle">จำลองเข้าเทรด</h2>
+  <div class="row2">
+    <div class="field"><label>ราคาเข้า</label><input id="dEntry" type="number" step="any"></div>
+    <div class="field"><label>Stop loss</label><input id="dSl" type="number" step="any"></div>
+  </div>
+  <div class="row2">
+    <div class="field"><label>Take profit</label><input id="dTp" type="number" step="any"></div>
+    <div class="field"><label>เลือก TP</label><select id="dTpSel"><option value="tp1">TP1 (แนวรับ/ต้าน)</option><option value="tp2">TP2 (2R)</option><option value="custom">กำหนดเอง</option></select></div>
+  </div>
+  <div class="calc">
+    <span>เสี่ยง (USDT)</span><b id="dRisk">-</b>
+    <span>ขนาดไม้ (เหรียญ)</span><b id="dQty">-</b>
+    <span>มูลค่าไม้ (USDT)</span><b id="dNotional">-</b>
+    <span>RR</span><b id="dRR">-</b>
+  </div>
+  <div class="actions">
+    <button class="btn-ghost" onclick="document.getElementById('tradeDlg').close()">ยกเลิก</button>
+    <button class="btn-primary" style="width:auto" id="dConfirm">เปิดไม้</button>
+  </div>
+</dialog>
 
 <script>
 'use strict';
@@ -163,7 +221,7 @@ let sortKey = 'tfRank', sortDir = -1;
 let chartPrice = null, chartRsi = null, activeSymbol = null, activeTf = null;
 
 // ---------- settings ----------
-const SETTING_IDS = ['rsiLen','minDiv','pivL','pivR','maxAge','topN','autoMin','forming','notify','sound'];
+const SETTING_IDS = ['rsiLen','minDiv','pivL','pivR','maxAge','topN','autoMin','minRR','riskPct','forming','notify','sound'];
 function loadSettings() {
   const s = JSON.parse(store.get('scannerSettings') || '{}');
   for (const id of SETTING_IDS) {
@@ -189,6 +247,8 @@ function cfg() {
     maxAge: +$('maxAge').value || 12,
     topN: +$('topN').value || 300,
     autoMin: +$('autoMin').value || 0,
+    minRR: +$('minRR').value || 0,
+    riskPct: +$('riskPct').value || 1,
     forming: $('forming').checked,
   };
 }
@@ -243,6 +303,44 @@ function rsi(closes, len) {
   return out;
 }
 
+function atr(kl, len = 14) {
+  const out = new Array(kl.length).fill(null);
+  let sum = 0, prev = null;
+  for (let i = 0; i < kl.length; i++) {
+    const k = kl[i];
+    const tr = i === 0 ? k.high - k.low : Math.max(k.high - k.low, Math.abs(k.high - kl[i - 1].close), Math.abs(k.low - kl[i - 1].close));
+    if (i < len) { sum += tr; if (i === len - 1) prev = sum / len; }
+    else prev = (prev * (len - 1) + tr) / len;
+    if (i >= len - 1) out[i] = prev;
+  }
+  return out;
+}
+
+// แผนเทรดจากสัญญาณ: เข้า = ปิดแท่งล่าสุด, SL = พ้นจุดสุดท้ายของ divergence 0.5 ATR,
+// TP1 = swing ตรงข้ามล่าสุด (ระหว่าง 2 จุดท้ายของ divergence), TP2 = 2R
+function makePlan(kl, highs, lows, atrArr, bullish, pts, n) {
+  const entry = kl[n - 1].close;
+  const a = atrArr[n - 1] || (entry * 0.01);
+  const lastPt = pts[pts.length - 1], prevPt = pts.length >= 2 ? pts[pts.length - 2] : null;
+  const sl = bullish ? lastPt.price - 0.5 * a : lastPt.price + 0.5 * a;
+  const risk = bullish ? entry - sl : sl - entry;
+  if (risk <= 0) return null;
+  let tp1 = null;
+  const rangeMax = (from, to, arr, isMax) => { let v = null; for (let i = from; i <= to; i++) v = v == null ? arr[i] : (isMax ? Math.max(v, arr[i]) : Math.min(v, arr[i])); return v; };
+  if (prevPt) {
+    const cand = bullish ? rangeMax(prevPt.i, lastPt.i, highs, true) : rangeMax(prevPt.i, lastPt.i, lows, false);
+    if (cand != null && (bullish ? cand > entry : cand < entry)) tp1 = cand;
+  }
+  if (tp1 == null && pts.length >= 3) {
+    const first = pts[0];
+    const cand = bullish ? rangeMax(first.i, lastPt.i, highs, true) : rangeMax(first.i, lastPt.i, lows, false);
+    if (cand != null && (bullish ? cand > entry : cand < entry)) tp1 = cand;
+  }
+  const tp2 = bullish ? entry + 2 * risk : entry - 2 * risk;
+  const rr1 = tp1 == null ? null : (bullish ? tp1 - entry : entry - tp1) / risk;
+  return { entry, sl, tp1, tp2, rr1, rr2: 2, risk, atr: a };
+}
+
 // จุด pivot บนราคา: i คือจุดต่ำสุด/สูงสุดในช่วง [i-L, i+R] (ยืนยันแล้วเท่านั้น)
 function pivots(arr, L, R, isLow) {
   const idx = [];
@@ -290,6 +388,7 @@ function chainDiv(piv, rIdx, price, r, bullish) {
 function analyze(kl, c) {
   const closes = kl.map(k => k.close), lows = kl.map(k => k.low), highs = kl.map(k => k.high);
   const r = rsi(closes, c.rsiLen);
+  const atrArr = atr(kl, 14);
   const n = kl.length;
   const out = [];
   for (const bullish of [true, false]) {
@@ -318,10 +417,12 @@ function analyze(kl, c) {
     if (age > c.maxAge) continue;
     const pts = chain.map(k => ({ i: piv[k], ri: rIdx[k] }));
     if (forming >= 0) pts.push({ i: forming, ri: formingR });
+    const points = pts.map(({ i, ri }) => ({ i, time: kl[i].time, price: price[i], rsi: r[ri], rsiTime: kl[ri].time }));
+    const plan = makePlan(kl, highs, lows, atrArr, bullish, points, n);
     out.push({
       dir: bullish ? 'bull' : 'bear', count: total, confirmed: count, forming: forming >= 0, age,
-      lastPivotTime: kl[last].time,
-      points: pts.map(({ i, ri }) => ({ i, time: kl[i].time, price: price[i], rsi: r[ri], rsiTime: kl[ri].time })),
+      lastPivotTime: kl[last].time, points, plan,
+      rr: plan ? (plan.rr1 ?? plan.rr2) : 0,
       rsiNow: r[n - 1], price: closes[n - 1],
     });
   }
@@ -379,6 +480,7 @@ async function scan() {
   if (newOnes.length) alertNew(newOnes);
   scanning = false; $('scanBtn').disabled = false;
   scheduleNext();
+  checkTrades();
 }
 
 function scheduleNext() {
@@ -422,6 +524,8 @@ function beep() {
 
 // ---------- table ----------
 function fmtPrice(p) { return p >= 100 ? p.toFixed(2) : p >= 1 ? p.toFixed(4) : p.toPrecision(4); }
+function pct(a, b) { const v = (a / b - 1) * 100; return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; }
+function fmtUsd(v) { return (v < 0 ? '-' : '') + Math.abs(v).toLocaleString('en-US', { maximumFractionDigits: 2, minimumFractionDigits: 2 }); }
 function fmtVol(v) { return v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : (v / 1e3).toFixed(0) + 'K'; }
 function fmtAgo(age, interval) {
   const mins = TF_MIN[interval] * age;
@@ -433,12 +537,14 @@ function render() {
   $('sBull').textContent = results.filter(x => x.dir === 'bull').length;
   $('sBear').textContent = results.filter(x => x.dir === 'bear').length;
   if (!results.length) { $('results').innerHTML = '<div class="empty">ไม่พบเหรียญที่เข้าเงื่อนไขในรอบนี้</div>'; return; }
-  const sorted = results.slice().sort((a, b) => {
+  const shown = c.minRR > 0 ? results.filter(x => x.plan && x.plan.rr1 != null && x.plan.rr1 >= c.minRR) : results;
+  if (!shown.length) { $('results').innerHTML = `<div class="empty">พบ ${results.length} สัญญาณ แต่ไม่มีอันที่ RR ถึง ${c.minRR}</div>`; return; }
+  const sorted = shown.slice().sort((a, b) => {
     const va = a[sortKey], vb = b[sortKey];
     const d = typeof va === 'string' ? va.localeCompare(vb) * sortDir : (va - vb) * sortDir;
     return d || (b.tfRank - a.tfRank) || (b.count - a.count) || (a.age - b.age);
   });
-  const cols = [['symbol', 'เหรียญ'], ['tfRank', 'TF'], ['dir', 'ทิศทาง'], ['count', 'จำนวน div'], ['age', 'จุดล่าสุดเมื่อ'], ['rsiNow', 'RSI'], ['price', 'ราคา'], ['chg', '24h %'], ['vol', 'Volume 24h']];
+  const cols = [['symbol', 'เหรียญ'], ['tfRank', 'TF'], ['dir', 'ทิศทาง'], ['count', 'จำนวน div'], ['age', 'จุดล่าสุดเมื่อ'], ['rsiNow', 'RSI'], ['price', 'ราคาเข้า'], ['sl', 'SL'], ['tp', 'TP1 / TP2'], ['rr', 'RR'], ['chg', '24h %'], ['vol', 'Volume 24h']];
   let h = '<table><thead><tr>' + cols.map(([k, t]) => `<th data-k="${k}" class="${k === sortKey ? 'sorted' : ''}${['chg', 'vol'].includes(k) ? ' hide-sm' : ''}">${t}</th>`).join('') + '<th></th></tr></thead><tbody>';
   for (const r of sorted) {
     h += `<tr data-symbol="${r.symbol}" data-tf="${r.tf}" class="${r.isNew ? 'new' : ''}${r.symbol === activeSymbol && r.tf === activeTf ? ' active' : ''}">
@@ -449,16 +555,20 @@ function render() {
       <td class="num">${r.age} แท่ง (${fmtAgo(r.age, r.tf)})</td>
       <td class="num">${r.rsiNow.toFixed(1)}</td>
       <td class="num">${fmtPrice(r.price)}</td>
+      <td class="num neg">${r.plan ? fmtPrice(r.plan.sl) + ' <span style="color:var(--muted)">(' + pct(r.plan.sl, r.price) + ')</span>' : '-'}</td>
+      <td class="num pos">${r.plan ? (r.plan.tp1 != null ? fmtPrice(r.plan.tp1) : '-') + ' / ' + fmtPrice(r.plan.tp2) : '-'}</td>
+      <td class="num"><b>${r.plan && r.plan.rr1 != null ? r.plan.rr1.toFixed(1) : '-'}</b> <span style="color:var(--muted)">/ 2.0</span></td>
       <td class="num hide-sm ${r.chg >= 0 ? 'pos' : 'neg'}">${r.chg.toFixed(2)}%</td>
       <td class="num hide-sm">${fmtVol(r.vol)}</td>
-      <td><a class="tv" href="https://www.tradingview.com/chart/?symbol=BINANCE:${r.symbol}&interval=${TV_INTERVAL[r.tf]}" target="_blank" rel="noopener" onclick="event.stopPropagation()">TV ↗</a></td>
+      <td style="white-space:nowrap">${r.plan ? `<button class="btn-trade" data-key="${r.key}" onclick="event.stopPropagation(); openTradeDialog(this.dataset.key)">เทรด</button> ` : ''}<a class="tv" href="https://www.tradingview.com/chart/?symbol=BINANCE:${r.symbol}&interval=${TV_INTERVAL[r.tf]}" target="_blank" rel="noopener" onclick="event.stopPropagation()">TV ↗</a></td>
     </tr>`;
   }
   h += '</tbody></table>';
   $('results').innerHTML = h;
   document.querySelectorAll('#results th[data-k]').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
-    if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = k === 'symbol' || k === 'age' ? 1 : -1; }
+    const key = (k === 'sl' || k === 'tp') ? 'rr' : k;
+    if (sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = key === 'symbol' || key === 'age' ? 1 : -1; }
     render();
   });
   document.querySelectorAll('#results tbody tr').forEach(tr => tr.onclick = () => showChart(tr.dataset.symbol, tr.dataset.tf));
@@ -492,12 +602,20 @@ function showChart(symbol, tf) {
   const sigs = results.filter(r => r.symbol === symbol && r.tf === tf);
   $('chartPanel').style.display = 'block';
   $('chartTitle').textContent = symbol + ' · ' + TF_LABEL[tf];
-  $('chartInfo').textContent = sigs.map(s => `${s.dir === 'bull' ? '▲ Bullish' : '▼ Bearish'} ยืนยัน ${s.confirmed}${s.forming ? ' + กำลังเกิด 1' : ''} · RSI ${s.rsiNow.toFixed(1)}`).join('   |   ');
+  $('chartInfo').textContent = sigs.map(s => `${s.dir === 'bull' ? '▲ Bullish' : '▼ Bearish'} ยืนยัน ${s.confirmed}${s.forming ? ' + กำลังเกิด 1' : ''} · RSI ${s.rsiNow.toFixed(1)}${s.plan ? ` · เข้า ${fmtPrice(s.plan.entry)} · SL ${fmtPrice(s.plan.sl)} · TP1 ${s.plan.tp1 != null ? fmtPrice(s.plan.tp1) + ' (RR ' + s.plan.rr1.toFixed(1) + ')' : '-'} · TP2 ${fmtPrice(s.plan.tp2)} (RR 2)` : ''}`).join('   |   ');
   $('tvLink').href = `https://www.tradingview.com/chart/?symbol=BINANCE:${symbol}&interval=${TV_INTERVAL[tf]}`;
 
   const candle = chartPrice.addCandlestickSeries({ upColor: '#26c281', downColor: '#f0506e', borderVisible: false, wickUpColor: '#26c281', wickDownColor: '#f0506e', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
   candle.setData(data.kl);
   seriesList.push([chartPrice, candle]);
+  for (const s of sigs) {
+    if (!s.plan) continue;
+    const pl = s.plan;
+    candle.createPriceLine({ price: pl.entry, color: '#4f8cff', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'เข้า' });
+    candle.createPriceLine({ price: pl.sl, color: '#f0506e', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'SL' });
+    if (pl.tp1 != null) candle.createPriceLine({ price: pl.tp1, color: '#26c281', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'TP1' });
+    candle.createPriceLine({ price: pl.tp2, color: '#26c281', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP2' });
+  }
 
   const rsiS = chartRsi.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: true, autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
   // แท่งแรก ๆ ที่ยังไม่มีค่า RSI ใส่เป็นแท่งว่าง (whitespace) เพื่อให้ลำดับแท่งตรงกับกราฟราคา ไม่งั้นแกนเวลาจะเลื่อนกัน
@@ -544,8 +662,135 @@ function showChart(symbol, tf) {
 }
 function closeChart() { $('chartPanel').style.display = 'none'; activeSymbol = null; activeTf = null; render(); }
 
+// ---------- paper trading ----------
+let port = (() => { try { return JSON.parse(store.get('paperPort')) || null; } catch (e) { return null; } })() || { start: 10000, balance: 10000, open: [], closed: [] };
+function savePort() { store.set('paperPort', JSON.stringify(port)); renderPort(); }
+function resetPort() {
+  if (!confirm('ล้างพอร์ตจำลองทั้งหมดและเริ่มใหม่?')) return;
+  const amt = +$('resetAmt').value || 10000;
+  port = { start: amt, balance: amt, open: [], closed: [] };
+  savePort();
+}
+
+let dlgSig = null;
+function openTradeDialog(key) {
+  const sig = results.find(r => r.key === key); if (!sig || !sig.plan) return;
+  dlgSig = sig;
+  $('dlgTitle').textContent = `จำลองเข้าเทรด ${sig.base}/USDT · ${TF_LABEL[sig.tf]} · ${sig.dir === 'bull' ? 'Long' : 'Short'}`;
+  $('dEntry').value = sig.plan.entry; $('dSl').value = sig.plan.sl;
+  $('dTpSel').value = sig.plan.tp1 != null ? 'tp1' : 'tp2';
+  $('dTp').value = sig.plan.tp1 != null ? sig.plan.tp1 : sig.plan.tp2;
+  dlgCalc();
+  $('tradeDlg').showModal();
+}
+function dlgCalc() {
+  if (!dlgSig) return;
+  const entry = +$('dEntry').value, sl = +$('dSl').value, tp = +$('dTp').value;
+  const bull = dlgSig.dir === 'bull';
+  const risk = bull ? entry - sl : sl - entry;
+  const reward = bull ? tp - entry : entry - tp;
+  const riskUsd = port.balance * (cfg().riskPct / 100);
+  const ok = risk > 0 && entry > 0;
+  const qty = ok ? riskUsd / risk : 0;
+  $('dRisk').textContent = fmtUsd(riskUsd) + ` (${cfg().riskPct}%)`;
+  $('dQty').textContent = ok ? qty.toPrecision(5) : '-';
+  $('dNotional').textContent = ok ? fmtUsd(qty * entry) : '-';
+  $('dRR').textContent = ok && reward > 0 ? (reward / risk).toFixed(2) : '-';
+  $('dConfirm').disabled = !ok || reward <= 0;
+}
+['dEntry', 'dSl', 'dTp'].forEach(id => $(id).addEventListener('input', () => { if (id === 'dTp') $('dTpSel').value = 'custom'; dlgCalc(); }));
+$('dTpSel').addEventListener('change', () => { if (!dlgSig) return; const v = $('dTpSel').value; if (v === 'tp1' && dlgSig.plan.tp1 != null) $('dTp').value = dlgSig.plan.tp1; if (v === 'tp2') $('dTp').value = dlgSig.plan.tp2; dlgCalc(); });
+$('dConfirm').onclick = () => {
+  if (!dlgSig) return;
+  const entry = +$('dEntry').value, sl = +$('dSl').value, tp = +$('dTp').value;
+  const bull = dlgSig.dir === 'bull';
+  const risk = bull ? entry - sl : sl - entry;
+  const riskUsd = port.balance * (cfg().riskPct / 100);
+  port.open.push({ id: Date.now().toString(36), symbol: dlgSig.symbol, base: dlgSig.base, tf: dlgSig.tf, dir: dlgSig.dir, entry, sl, tp, qty: riskUsd / risk, riskUsd, openedAt: Date.now(), last: entry, checkedTo: Date.now() });
+  savePort();
+  $('tradeDlg').close();
+  $('portPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+};
+
+function tradeR(t, price) { const risk = t.dir === 'bull' ? t.entry - t.sl : t.sl - t.entry; return (t.dir === 'bull' ? price - t.entry : t.entry - price) / risk; }
+function tradePnl(t, price) { return (t.dir === 'bull' ? price - t.entry : t.entry - price) * t.qty; }
+function closeTrade(t, price, reason, when) {
+  t.exit = price; t.reason = reason; t.closedAt = when || Date.now();
+  t.pnl = tradePnl(t, price); t.r = tradeR(t, price);
+  port.balance += t.pnl;
+  port.open = port.open.filter(x => x.id !== t.id);
+  port.closed.unshift(t);
+}
+function manualClose(id) {
+  const t = port.open.find(x => x.id === id); if (!t) return;
+  if (!confirm(`ปิดไม้ ${t.base} ที่ราคา ${fmtPrice(t.last)} ?`)) return;
+  closeTrade(t, t.last, 'manual'); savePort();
+}
+
+let checking = false;
+async function checkTrades() {
+  if (checking || !port.open.length) { renderPort(); return; }
+  checking = true;
+  for (const t of port.open.slice()) {
+    try {
+      // ไล่ดูแท่ง 1 ชั่วโมงตั้งแต่เปิดไม้: แตะ SL ก่อน TP เสมอถ้าแท่งเดียวโดนทั้งคู่
+      let from = t.openedAt, hit = null;
+      for (let page = 0; page < 30 && !hit; page++) {
+        const raw = await api(`/api/v3/klines?symbol=${t.symbol}&interval=1h&startTime=${from}&limit=1000`);
+        if (!raw.length) break;
+        for (const k of raw) {
+          const hi = +k[2], lo = +k[3];
+          if (t.dir === 'bull') { if (lo <= t.sl) { hit = ['sl', t.sl, k[0]]; break; } if (hi >= t.tp) { hit = ['tp', t.tp, k[0]]; break; } }
+          else { if (hi >= t.sl) { hit = ['sl', t.sl, k[0]]; break; } if (lo <= t.tp) { hit = ['tp', t.tp, k[0]]; break; } }
+        }
+        if (raw.length < 1000) break;
+        from = raw[raw.length - 1][0] + 1;
+      }
+      if (hit) { closeTrade(t, hit[1], hit[0], hit[2]); continue; }
+      const px = await api(`/api/v3/ticker/price?symbol=${t.symbol}`);
+      t.last = +px.price; t.checkedTo = Date.now();
+    } catch (e) { /* ข้ามรอบนี้ */ }
+  }
+  checking = false;
+  savePort();
+}
+
+function renderPort() {
+  const openPnl = port.open.reduce((a, t) => a + tradePnl(t, t.last), 0);
+  const wins = port.closed.filter(t => t.pnl > 0).length, losses = port.closed.filter(t => t.pnl <= 0).length;
+  const totalR = port.closed.reduce((a, t) => a + t.r, 0);
+  const realized = port.balance - port.start;
+  const eq = port.balance + openPnl;
+  $('sPort').textContent = fmtUsd(eq);
+  $('sPort').className = 'v ' + (eq >= port.start ? 'pos' : 'neg');
+  $('portStats').innerHTML = `
+    <div class="stat"><div class="k">มูลค่าพอร์ต</div><div class="v ${eq >= port.start ? 'pos' : 'neg'}">${fmtUsd(eq)}</div></div>
+    <div class="stat"><div class="k">กำไร/ขาดทุนที่ปิดแล้ว</div><div class="v ${realized >= 0 ? 'pos' : 'neg'}">${realized >= 0 ? '+' : ''}${fmtUsd(realized)} <span style="font-size:12px;color:var(--muted)">(${pct(port.balance, port.start)})</span></div></div>
+    <div class="stat"><div class="k">ไม้เปิดอยู่ (ลอยตัว)</div><div class="v ${openPnl >= 0 ? 'pos' : 'neg'}">${port.open.length} <span style="font-size:13px">${openPnl >= 0 ? '+' : ''}${fmtUsd(openPnl)}</span></div></div>
+    <div class="stat"><div class="k">ชนะ / แพ้</div><div class="v">${wins} / ${losses} <span style="font-size:12px;color:var(--muted)">${port.closed.length ? (wins / port.closed.length * 100).toFixed(0) + '%' : ''}</span></div></div>
+    <div class="stat"><div class="k">รวม R</div><div class="v ${totalR >= 0 ? 'pos' : 'neg'}">${totalR >= 0 ? '+' : ''}${totalR.toFixed(2)}R</div></div>`;
+  const dt = ms => new Date(ms).toLocaleString('th-TH', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+  if (!port.open.length) $('openTrades').innerHTML = '<div class="empty" style="padding:16px">ยังไม่มีไม้เปิด กดปุ่ม "เทรด" ที่สัญญาณในตารางด้านบน</div>';
+  else $('openTrades').innerHTML = '<table><thead><tr><th>เหรียญ</th><th>ทาง</th><th>เข้า</th><th>SL</th><th>TP</th><th>ราคาตอนนี้</th><th>ลอยตัว</th><th>R</th><th>เปิดเมื่อ</th><th></th></tr></thead><tbody>' + port.open.map(t => {
+    const pnl = tradePnl(t, t.last), r = tradeR(t, t.last);
+    return `<tr><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
+      <td class="num">${fmtPrice(t.entry)}</td><td class="num neg">${fmtPrice(t.sl)}</td><td class="num pos">${fmtPrice(t.tp)}</td><td class="num">${fmtPrice(t.last)}</td>
+      <td class="num ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}${fmtUsd(pnl)}</td><td class="num ${r >= 0 ? 'pos' : 'neg'}">${r.toFixed(2)}R</td>
+      <td class="num">${dt(t.openedAt)}</td><td><button class="btn-danger" onclick="manualClose('${t.id}')">ปิดไม้</button></td></tr>`;
+  }).join('') + '</tbody></table>';
+  if (!port.closed.length) $('closedTrades').innerHTML = '<div class="empty" style="padding:16px">ยังไม่มีประวัติ</div>';
+  else $('closedTrades').innerHTML = '<table><thead><tr><th>เหรียญ</th><th>ทาง</th><th>เข้า</th><th>ออก</th><th>ผล</th><th>กำไร/ขาดทุน</th><th>R</th><th>เปิด</th><th>ปิด</th></tr></thead><tbody>' + port.closed.slice(0, 30).map(t => `
+    <tr><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
+      <td class="num">${fmtPrice(t.entry)}</td><td class="num">${fmtPrice(t.exit)}</td>
+      <td><span class="tag ${t.reason === 'tp' ? 'bull' : t.reason === 'sl' ? 'bear' : 'tf'}">${t.reason === 'tp' ? 'TP' : t.reason === 'sl' ? 'SL' : 'ปิดเอง'}</span></td>
+      <td class="num ${t.pnl >= 0 ? 'pos' : 'neg'}">${t.pnl >= 0 ? '+' : ''}${fmtUsd(t.pnl)}</td><td class="num ${t.r >= 0 ? 'pos' : 'neg'}">${t.r.toFixed(2)}R</td>
+      <td class="num">${dt(t.openedAt)}</td><td class="num">${dt(t.closedAt)}</td></tr>`).join('') + '</tbody></table>';
+}
+
 // ---------- init ----------
 loadSettings();
+renderPort();
+checkTrades();
 $('scanBtn').onclick = () => {
   if ($('notify').checked && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
   scan();
