@@ -171,10 +171,22 @@
         <button class="btn-ghost" onclick="resetPort()">รีเซ็ตพอร์ต</button>
         <button class="btn-ghost" onclick="checkTrades()">เช็คราคาตอนนี้</button>
       </div>
+      <details id="syncBox" style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--muted)">ซิงค์ข้ามเครื่อง: <span id="syncState">ยังไม่ตั้งค่า</span></summary>
+        <div class="row2" style="margin-top:8px">
+          <div class="field"><label>Supabase URL</label><input id="sbUrl" placeholder="https://xxxx.supabase.co"></div>
+          <div class="field"><label>Supabase anon key</label><input id="sbKey" placeholder="eyJ..."></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>รหัสซิงค์ (ตั้งเอง ใช้เหมือนกันทุกเครื่อง)</label><input id="syncCode" placeholder="เช่น kjt-2026-xxxx"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn-ghost" onclick="syncNow()">เชื่อมต่อ / ซิงค์ตอนนี้</button></div>
+        </div>
+        <div class="legend">ข้อมูลพอร์ตจะถูกเก็บไว้ในตาราง paper_port ของ Supabase คุณ เครื่องไหนใส่รหัสซิงค์เดียวกันจะเห็นพอร์ตเดียวกัน (เครื่องที่บันทึกหลังสุดชนะ)</div>
+      </details>
       <div class="stats" id="portStats" style="margin-top:12px"></div>
-      <h3>ไม้ที่เปิดอยู่</h3>
+      <h3>ไม้ที่เปิดอยู่ · กดแถวเพื่อดูกราฟ</h3>
       <div class="tbl-wrap" id="openTrades"></div>
-      <h3>ประวัติ (ล่าสุด 30 ไม้)</h3>
+      <h3>ประวัติ (ล่าสุด 30 ไม้) · กดแถวเพื่อดูกราฟ</h3>
       <div class="tbl-wrap" id="closedTrades"></div>
     </div>
   </main>
@@ -190,12 +202,17 @@
     <div class="field"><label>Take profit</label><input id="dTp" type="number" step="any"></div>
     <div class="field"><label>เลือก TP</label><select id="dTpSel"><option value="tp1">TP1 (แนวรับ/ต้าน)</option><option value="tp2">TP2 (2R)</option><option value="custom">กำหนดเอง</option></select></div>
   </div>
-  <div class="calc">
-    <span>เสี่ยง (USDT)</span><b id="dRisk">-</b>
-    <span>ขนาดไม้ (เหรียญ)</span><b id="dQty">-</b>
-    <span>มูลค่าไม้ (USDT)</span><b id="dNotional">-</b>
-    <span>RR</span><b id="dRR">-</b>
+  <div class="row2">
+    <div class="field"><label>เงินที่ใช้เปิดไม้ (USDT)</label><input id="dAmount" type="number" step="any" min="0"></div>
+    <div class="field"><label>ยอมเสี่ยงถ้าโดน SL (USDT)</label><input id="dRiskUsd" type="number" step="any" min="0"></div>
   </div>
+  <div class="calc">
+    <span>ขนาดไม้ (เหรียญ)</span><b id="dQty">-</b>
+    <span>RR</span><b id="dRR">-</b>
+    <span>% ของพอร์ตที่เสี่ยง</span><b id="dRiskPct">-</b>
+    <span>กำไรถ้าถึง TP</span><b id="dGain">-</b>
+  </div>
+  <div class="legend" style="margin-bottom:10px">แก้ช่องไหนอีกช่องจะคำนวณตามให้ (เงินที่ใช้ = ขนาดไม้ × ราคาเข้า)</div>
   <div class="actions">
     <button class="btn-ghost" onclick="document.getElementById('tradeDlg').close()">ยกเลิก</button>
     <button class="btn-primary" style="width:auto" id="dConfirm">เปิดไม้</button>
@@ -221,7 +238,7 @@ let sortKey = 'tfRank', sortDir = -1;
 let chartPrice = null, chartRsi = null, activeSymbol = null, activeTf = null;
 
 // ---------- settings ----------
-const SETTING_IDS = ['rsiLen','minDiv','pivL','pivR','maxAge','topN','autoMin','minRR','riskPct','forming','notify','sound'];
+const SETTING_IDS = ['rsiLen','minDiv','pivL','pivR','maxAge','topN','autoMin','minRR','riskPct','forming','notify','sound','sbUrl','sbKey','syncCode'];
 function loadSettings() {
   const s = JSON.parse(store.get('scannerSettings') || '{}');
   for (const id of SETTING_IDS) {
@@ -597,16 +614,38 @@ function clearSeries() { for (const [ch, s] of seriesList) ch.removeSeries(s); s
 
 function showChart(symbol, tf) {
   const data = klineCache[symbol + '|' + tf]; if (!data) return;
+  const sigs = results.filter(r => r.symbol === symbol && r.tf === tf);
+  drawChart({ symbol, tf, kl: data.kl, r: data.r, sigs, trade: null });
+  $('chartInfo').textContent = sigs.map(s => `${s.dir === 'bull' ? '▲ Bullish' : '▼ Bearish'} ยืนยัน ${s.confirmed}${s.forming ? ' + กำลังเกิด 1' : ''} · RSI ${s.rsiNow.toFixed(1)}${s.plan ? ` · เข้า ${fmtPrice(s.plan.entry)} · SL ${fmtPrice(s.plan.sl)} · TP1 ${s.plan.tp1 != null ? fmtPrice(s.plan.tp1) + ' (RR ' + s.plan.rr1.toFixed(1) + ')' : '-'} · TP2 ${fmtPrice(s.plan.tp2)} (RR 2)` : ''}`).join('   |   ');
+  render();
+}
+
+// กราฟของไม้ที่เปิดอยู่/ประวัติ: ดึงแท่งย้อนหลังให้ครอบคลุมตั้งแต่ก่อนเปิดไม้
+async function showTradeChart(id) {
+  const t = port.open.find(x => x.id === id) || port.closed.find(x => x.id === id); if (!t) return;
+  const barMs = TF_MIN[t.tf] * 60000;
+  const endMs = t.closedAt || Date.now();
+  const need = Math.ceil((endMs - t.openedAt) / barMs) + 90;
+  const limit = Math.min(1000, Math.max(150, need));
+  let kl;
+  try { kl = await getKlines(t.symbol, t.tf, limit); } catch (e) { alert('โหลดกราฟไม่ได้: ' + e.message); return; }
+  if (t.closedAt) { const cutoff = t.closedAt / 1000 + barMs / 1000 * 25; kl = kl.filter(k => k.time <= cutoff); }
+  const r = rsi(kl.map(k => k.close), cfg().rsiLen);
+  drawChart({ symbol: t.symbol, tf: t.tf, kl, r, sigs: [], trade: t });
+  const pnl = t.closedAt ? t.pnl : tradePnl(t, t.last), rr = t.closedAt ? t.r : tradeR(t, t.last);
+  $('chartInfo').textContent = `${t.dir === 'bull' ? 'Long' : 'Short'} · เข้า ${fmtPrice(t.entry)} · SL ${fmtPrice(t.sl)} · TP ${fmtPrice(t.tp)} · ${t.closedAt ? `ออก ${fmtPrice(t.exit)} (${t.reason === 'tp' ? 'TP' : t.reason === 'sl' ? 'SL' : 'ปิดเอง'})` : `ราคาตอนนี้ ${fmtPrice(t.last)}`} · ${pnl >= 0 ? '+' : ''}${fmtUsd(pnl)} USDT (${rr.toFixed(2)}R)`;
+  activeSymbol = null; activeTf = null; render();
+}
+
+function drawChart({ symbol, tf, kl, r, sigs, trade }) {
   ensureCharts(); clearSeries();
   activeSymbol = symbol; activeTf = tf;
-  const sigs = results.filter(r => r.symbol === symbol && r.tf === tf);
   $('chartPanel').style.display = 'block';
-  $('chartTitle').textContent = symbol + ' · ' + TF_LABEL[tf];
-  $('chartInfo').textContent = sigs.map(s => `${s.dir === 'bull' ? '▲ Bullish' : '▼ Bearish'} ยืนยัน ${s.confirmed}${s.forming ? ' + กำลังเกิด 1' : ''} · RSI ${s.rsiNow.toFixed(1)}${s.plan ? ` · เข้า ${fmtPrice(s.plan.entry)} · SL ${fmtPrice(s.plan.sl)} · TP1 ${s.plan.tp1 != null ? fmtPrice(s.plan.tp1) + ' (RR ' + s.plan.rr1.toFixed(1) + ')' : '-'} · TP2 ${fmtPrice(s.plan.tp2)} (RR 2)` : ''}`).join('   |   ');
+  $('chartTitle').textContent = symbol + ' · ' + TF_LABEL[tf] + (trade ? ' · ไม้จำลอง' : '');
   $('tvLink').href = `https://www.tradingview.com/chart/?symbol=BINANCE:${symbol}&interval=${TV_INTERVAL[tf]}`;
 
   const candle = chartPrice.addCandlestickSeries({ upColor: '#26c281', downColor: '#f0506e', borderVisible: false, wickUpColor: '#26c281', wickDownColor: '#f0506e', priceFormat: { type: 'price', precision: 6, minMove: 0.000001 } });
-  candle.setData(data.kl);
+  candle.setData(kl);
   seriesList.push([chartPrice, candle]);
   for (const s of sigs) {
     if (!s.plan) continue;
@@ -616,10 +655,15 @@ function showChart(symbol, tf) {
     if (pl.tp1 != null) candle.createPriceLine({ price: pl.tp1, color: '#26c281', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'TP1' });
     candle.createPriceLine({ price: pl.tp2, color: '#26c281', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'TP2' });
   }
+  if (trade) {
+    candle.createPriceLine({ price: trade.entry, color: '#4f8cff', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'เข้า' });
+    candle.createPriceLine({ price: trade.sl, color: '#f0506e', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'SL' });
+    candle.createPriceLine({ price: trade.tp, color: '#26c281', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'TP' });
+  }
 
   const rsiS = chartRsi.addLineSeries({ color: '#a78bfa', lineWidth: 2, priceLineVisible: false, lastValueVisible: true, autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }) });
   // แท่งแรก ๆ ที่ยังไม่มีค่า RSI ใส่เป็นแท่งว่าง (whitespace) เพื่อให้ลำดับแท่งตรงกับกราฟราคา ไม่งั้นแกนเวลาจะเลื่อนกัน
-  rsiS.setData(data.kl.map((k, i) => data.r[i] == null ? { time: k.time } : { time: k.time, value: data.r[i] }));
+  rsiS.setData(kl.map((k, i) => r[i] == null ? { time: k.time } : { time: k.time, value: r[i] }));
   for (const [lv, col] of [[70, '#f0506e'], [30, '#26c281'], [50, '#3a4460']]) rsiS.createPriceLine({ price: lv, color: col, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '' });
   seriesList.push([chartRsi, rsiS]);
 
@@ -647,24 +691,77 @@ function showChart(symbol, tf) {
       markers.push({ time: p.time, position: s.dir === 'bull' ? 'belowBar' : 'aboveBar', color: isForming ? '#f5b942' : col, shape: isForming ? 'circle' : (s.dir === 'bull' ? 'arrowUp' : 'arrowDown'), text: isForming ? 'กำลังเกิด' : '' });
     });
   }
+  let focusFrom = kl.length - 120;
+  if (trade) {
+    const barAt = ms => { let j = 0; for (let i = 0; i < kl.length; i++) if (kl[i].time * 1000 <= ms) j = i; return j; };
+    const ei = barAt(trade.openedAt);
+    markers.push({ time: kl[ei].time, position: trade.dir === 'bull' ? 'belowBar' : 'aboveBar', color: '#4f8cff', shape: trade.dir === 'bull' ? 'arrowUp' : 'arrowDown', text: 'เข้า ' + fmtPrice(trade.entry) });
+    if (trade.closedAt) {
+      const xi = barAt(trade.closedAt);
+      const win = trade.pnl >= 0;
+      markers.push({ time: kl[xi].time, position: trade.dir === 'bull' ? 'aboveBar' : 'belowBar', color: win ? '#26c281' : '#f0506e', shape: 'circle', text: (trade.reason === 'tp' ? 'TP ' : trade.reason === 'sl' ? 'SL ' : 'ปิด ') + fmtPrice(trade.exit) });
+    }
+    focusFrom = Math.max(0, ei - 60);
+  }
   markers.sort((a, b) => a.time - b.time);
   candle.setMarkers(markers);
-  const range = { from: data.kl.length - 120, to: data.kl.length + 3 };
+  const range = { from: focusFrom, to: kl.length + 3 };
   let tries = 0;
   const applyRange = () => {
     chartPrice.timeScale().setVisibleLogicalRange(range); chartRsi.timeScale().setVisibleLogicalRange(range);
     const got = chartPrice.timeScale().getVisibleLogicalRange();
-    if ((!got || Math.abs(got.from - range.from) > 5) && ++tries < 10 && activeSymbol === symbol && activeTf === tf) setTimeout(applyRange, 300);
+    if ((!got || Math.abs(got.from - range.from) > 5) && ++tries < 10 && $('chartTitle').textContent.startsWith(symbol)) setTimeout(applyRange, 300);
   };
   setTimeout(applyRange, 50);
-  render();
   $('chartPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function closeChart() { $('chartPanel').style.display = 'none'; activeSymbol = null; activeTf = null; render(); }
 
 // ---------- paper trading ----------
 let port = (() => { try { return JSON.parse(store.get('paperPort')) || null; } catch (e) { return null; } })() || { start: 10000, balance: 10000, open: [], closed: [] };
-function savePort() { store.set('paperPort', JSON.stringify(port)); renderPort(); }
+function savePort(push = true) { port.updatedAt = Date.now(); store.set('paperPort', JSON.stringify(port)); renderPort(); if (push) syncPush(); }
+
+// ---------- sync ข้ามเครื่องผ่าน Supabase (ตาราง paper_port, RLS ตรวจ header x-sync-code) ----------
+function syncCfg() {
+  const url = ($('sbUrl').value || '').trim().replace(/\/+$/, ''), key = ($('sbKey').value || '').trim(), code = ($('syncCode').value || '').trim();
+  return url && key && code ? { url, key, code } : null;
+}
+function setSyncState(t, ok) { $('syncState').textContent = t; $('syncState').style.color = ok == null ? '' : ok ? 'var(--bull)' : 'var(--bear)'; }
+async function sbFetch(path, opts = {}) {
+  const c = syncCfg(); if (!c) throw new Error('ยังไม่ตั้งค่า');
+  const r = await fetch(c.url + '/rest/v1/' + path, { ...opts, headers: { apikey: c.key, Authorization: 'Bearer ' + c.key, 'x-sync-code': c.code, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  return r.status === 204 ? null : r.json();
+}
+let pushing = false, pushAgain = false;
+async function syncPush() {
+  const c = syncCfg(); if (!c) return;
+  if (pushing) { pushAgain = true; return; }
+  pushing = true;
+  try {
+    await sbFetch('paper_port?on_conflict=code', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ code: c.code, data: port, updated_at: new Date().toISOString() }) });
+    setSyncState('ซิงค์แล้ว ' + new Date().toLocaleTimeString('th-TH'), true);
+  } catch (e) { setSyncState('ซิงค์ไม่สำเร็จ: ' + e.message, false); }
+  pushing = false;
+  if (pushAgain) { pushAgain = false; syncPush(); }
+}
+async function syncPull() {
+  const c = syncCfg(); if (!c) { setSyncState('ยังไม่ตั้งค่า', null); return false; }
+  try {
+    const rows = await sbFetch('paper_port?code=eq.' + encodeURIComponent(c.code) + '&select=data');
+    if (rows.length && rows[0].data && (rows[0].data.updatedAt || 0) > (port.updatedAt || 0)) {
+      port = rows[0].data; store.set('paperPort', JSON.stringify(port)); renderPort();
+      setSyncState('ดึงข้อมูลล่าสุดจากคลาวด์แล้ว', true);
+    } else if (!rows.length) { await syncPush(); }
+    else setSyncState('ซิงค์แล้ว (ข้อมูลตรงกัน)', true);
+    return true;
+  } catch (e) { setSyncState('เชื่อมต่อไม่ได้: ' + e.message, false); return false; }
+}
+async function syncNow() {
+  saveSettings();
+  const ok = await syncPull();
+  if (ok) { await syncPush(); checkTrades(); }
+}
 function resetPort() {
   if (!confirm('ล้างพอร์ตจำลองทั้งหมดและเริ่มใหม่?')) return;
   const amt = +$('resetAmt').value || 10000;
@@ -680,33 +777,41 @@ function openTradeDialog(key) {
   $('dEntry').value = sig.plan.entry; $('dSl').value = sig.plan.sl;
   $('dTpSel').value = sig.plan.tp1 != null ? 'tp1' : 'tp2';
   $('dTp').value = sig.plan.tp1 != null ? sig.plan.tp1 : sig.plan.tp2;
-  dlgCalc();
+  $('dRiskUsd').value = +(port.balance * (cfg().riskPct / 100)).toFixed(2);
+  dlgCalc('risk');
   $('tradeDlg').showModal();
 }
-function dlgCalc() {
+// from = 'amount' (ผู้ใช้แก้เงินที่ใช้) | 'risk' (ผู้ใช้แก้ยอดเสี่ยง หรือค่าเริ่มต้นจาก % พอร์ต)
+function dlgCalc(from = 'risk') {
   if (!dlgSig) return;
   const entry = +$('dEntry').value, sl = +$('dSl').value, tp = +$('dTp').value;
   const bull = dlgSig.dir === 'bull';
   const risk = bull ? entry - sl : sl - entry;
   const reward = bull ? tp - entry : entry - tp;
-  const riskUsd = port.balance * (cfg().riskPct / 100);
   const ok = risk > 0 && entry > 0;
-  const qty = ok ? riskUsd / risk : 0;
-  $('dRisk').textContent = fmtUsd(riskUsd) + ` (${cfg().riskPct}%)`;
-  $('dQty').textContent = ok ? qty.toPrecision(5) : '-';
-  $('dNotional').textContent = ok ? fmtUsd(qty * entry) : '-';
+  let qty = 0, riskUsd = 0, amount = 0;
+  if (ok) {
+    if (from === 'amount') { amount = +$('dAmount').value || 0; qty = amount / entry; riskUsd = qty * risk; $('dRiskUsd').value = +riskUsd.toFixed(2); }
+    else { riskUsd = +$('dRiskUsd').value || 0; qty = riskUsd / risk; amount = qty * entry; $('dAmount').value = +amount.toFixed(2); }
+  }
+  $('dQty').textContent = ok && qty > 0 ? qty.toPrecision(5) : '-';
   $('dRR').textContent = ok && reward > 0 ? (reward / risk).toFixed(2) : '-';
-  $('dConfirm').disabled = !ok || reward <= 0;
+  $('dRiskPct').textContent = ok && port.balance > 0 ? (riskUsd / port.balance * 100).toFixed(2) + '%' : '-';
+  $('dGain').textContent = ok && reward > 0 ? '+' + fmtUsd(qty * reward) : '-';
+  $('dConfirm').disabled = !ok || reward <= 0 || qty <= 0;
 }
-['dEntry', 'dSl', 'dTp'].forEach(id => $(id).addEventListener('input', () => { if (id === 'dTp') $('dTpSel').value = 'custom'; dlgCalc(); }));
+['dEntry', 'dSl', 'dTp'].forEach(id => $(id).addEventListener('input', () => { if (id === 'dTp') $('dTpSel').value = 'custom'; dlgCalc('risk'); }));
+$('dAmount').addEventListener('input', () => dlgCalc('amount'));
+$('dRiskUsd').addEventListener('input', () => dlgCalc('risk'));
 $('dTpSel').addEventListener('change', () => { if (!dlgSig) return; const v = $('dTpSel').value; if (v === 'tp1' && dlgSig.plan.tp1 != null) $('dTp').value = dlgSig.plan.tp1; if (v === 'tp2') $('dTp').value = dlgSig.plan.tp2; dlgCalc(); });
 $('dConfirm').onclick = () => {
   if (!dlgSig) return;
   const entry = +$('dEntry').value, sl = +$('dSl').value, tp = +$('dTp').value;
   const bull = dlgSig.dir === 'bull';
   const risk = bull ? entry - sl : sl - entry;
-  const riskUsd = port.balance * (cfg().riskPct / 100);
-  port.open.push({ id: Date.now().toString(36), symbol: dlgSig.symbol, base: dlgSig.base, tf: dlgSig.tf, dir: dlgSig.dir, entry, sl, tp, qty: riskUsd / risk, riskUsd, openedAt: Date.now(), last: entry, checkedTo: Date.now() });
+  const amount = +$('dAmount').value || 0, qty = amount / entry, riskUsd = qty * risk;
+  if (qty <= 0) return;
+  port.open.push({ id: Date.now().toString(36), symbol: dlgSig.symbol, base: dlgSig.base, tf: dlgSig.tf, dir: dlgSig.dir, entry, sl, tp, qty, riskUsd, amount, openedAt: Date.now(), last: entry, checkedTo: Date.now() });
   savePort();
   $('tradeDlg').close();
   $('portPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -773,14 +878,14 @@ function renderPort() {
   if (!port.open.length) $('openTrades').innerHTML = '<div class="empty" style="padding:16px">ยังไม่มีไม้เปิด กดปุ่ม "เทรด" ที่สัญญาณในตารางด้านบน</div>';
   else $('openTrades').innerHTML = '<table><thead><tr><th>เหรียญ</th><th>ทาง</th><th>เข้า</th><th>SL</th><th>TP</th><th>ราคาตอนนี้</th><th>ลอยตัว</th><th>R</th><th>เปิดเมื่อ</th><th></th></tr></thead><tbody>' + port.open.map(t => {
     const pnl = tradePnl(t, t.last), r = tradeR(t, t.last);
-    return `<tr><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
+    return `<tr onclick="showTradeChart('${t.id}')"><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
       <td class="num">${fmtPrice(t.entry)}</td><td class="num neg">${fmtPrice(t.sl)}</td><td class="num pos">${fmtPrice(t.tp)}</td><td class="num">${fmtPrice(t.last)}</td>
       <td class="num ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}${fmtUsd(pnl)}</td><td class="num ${r >= 0 ? 'pos' : 'neg'}">${r.toFixed(2)}R</td>
-      <td class="num">${dt(t.openedAt)}</td><td><button class="btn-danger" onclick="manualClose('${t.id}')">ปิดไม้</button></td></tr>`;
+      <td class="num">${dt(t.openedAt)}</td><td><button class="btn-danger" onclick="event.stopPropagation(); manualClose('${t.id}')">ปิดไม้</button></td></tr>`;
   }).join('') + '</tbody></table>';
   if (!port.closed.length) $('closedTrades').innerHTML = '<div class="empty" style="padding:16px">ยังไม่มีประวัติ</div>';
   else $('closedTrades').innerHTML = '<table><thead><tr><th>เหรียญ</th><th>ทาง</th><th>เข้า</th><th>ออก</th><th>ผล</th><th>กำไร/ขาดทุน</th><th>R</th><th>เปิด</th><th>ปิด</th></tr></thead><tbody>' + port.closed.slice(0, 30).map(t => `
-    <tr><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
+    <tr onclick="showTradeChart('${t.id}')"><td><b>${t.base}</b> <span class="tag tf">${TF_LABEL[t.tf]}</span></td><td><span class="tag ${t.dir}">${t.dir === 'bull' ? 'Long' : 'Short'}</span></td>
       <td class="num">${fmtPrice(t.entry)}</td><td class="num">${fmtPrice(t.exit)}</td>
       <td><span class="tag ${t.reason === 'tp' ? 'bull' : t.reason === 'sl' ? 'bear' : 'tf'}">${t.reason === 'tp' ? 'TP' : t.reason === 'sl' ? 'SL' : 'ปิดเอง'}</span></td>
       <td class="num ${t.pnl >= 0 ? 'pos' : 'neg'}">${t.pnl >= 0 ? '+' : ''}${fmtUsd(t.pnl)}</td><td class="num ${t.r >= 0 ? 'pos' : 'neg'}">${t.r.toFixed(2)}R</td>
@@ -790,7 +895,7 @@ function renderPort() {
 // ---------- init ----------
 loadSettings();
 renderPort();
-checkTrades();
+syncPull().then(() => checkTrades());
 $('scanBtn').onclick = () => {
   if ($('notify').checked && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
   scan();
